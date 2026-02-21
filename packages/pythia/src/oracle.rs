@@ -267,6 +267,30 @@ impl Oracle {
             .collect())
     }
 
+    /// List the latest announcements with maturity at or before the given date,
+    /// ordered by maturity descending, limited to 100
+    pub async fn list_announcements(
+        &self,
+        from: DateTime<Utc>,
+        count: i64,
+    ) -> Result<Box<[OracleAnnouncement]>> {
+        let asset_pair_prefix = self
+            .asset_pair_info
+            .asset_pair
+            .to_string()
+            .to_lowercase();
+
+        let events = self
+            .db
+            .get_latest_announcements(&asset_pair_prefix, from, count)
+            .await?;
+
+        Ok(events
+            .into_iter()
+            .map(|e| compute_announcement(self, e))
+            .collect())
+    }
+
     pub async fn force_new_attest_with_price(
         &self,
         maturation: DateTime<Utc>,

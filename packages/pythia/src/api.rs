@@ -82,6 +82,10 @@ where
                 "/asset/{asset_pair}/announcements/batch",
                 web::post().to(http::oracle_batch_announcements_service::<Context>),
             )
+            .route(
+                "/asset/{asset_pair}/announcements",
+                web::get().to(http::list_announcements::<Context>),
+            )
             // .route("/ws", web::get().to(ws::websocket::<Context>))
             .route("/ws", web::get().to(ws::websocket::<Context>));
         if debug_mode {

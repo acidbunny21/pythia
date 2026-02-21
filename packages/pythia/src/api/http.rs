@@ -203,6 +203,50 @@ pub(super) async fn oracle_batch_announcements_service<Context: OracleContext>(
     Ok(HttpResponse::Ok().json(announcements))
 }
 
+const DEFAULT_LIST_COUNT: i64 = 20;
+const MAX_LIST_COUNT: i64 = 100;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ListAnnouncementsQuery {
+    from: DateTime<FixedOffset>,
+    count: Option<i64>,
+}
+
+// https://github.com/actix/actix-web/issues/2866 explains why we commented this:
+// #[get("/asset/{asset_pair}/announcements")]
+/// Gets the last N announcements from the oracle for the given asset pair
+/// with maturity at or before the provided date, ordered by maturity descending
+/// with request: `GET /asset/{asset_pair}/announcements?from=<rfc3339_datetime>`
+pub(super) async fn list_announcements<Context: OracleContext>(
+    context: ApiContext<Context>,
+    path: web::Path<AssetPair>,
+    query: web::Query<ListAnnouncementsQuery>,
+) -> Result<HttpResponse> {
+    let asset_pair = path.into_inner();
+    let count = query.count.unwrap_or(DEFAULT_LIST_COUNT).clamp(1, MAX_LIST_COUNT);
+    info!("GET /asset/{asset_pair}/announcements?from={}&count={count}", query.from);
+
+    let oracle = context
+        .get_oracle(&asset_pair)
+        .ok_or(PythiaApiError::UnrecordedAssetPair(asset_pair))?;
+
+    if oracle
+        .is_empty()
+        .await
+        .map_err(PythiaApiError::OracleFail)?
+    {
+        return Err(PythiaApiError::OracleEmpty.into());
+    }
+
+    let announcements = oracle
+        .list_announcements(query.from.with_timezone(&Utc), count)
+        .await
+        .map_err(PythiaApiError::OracleFail)?;
+
+    Ok(HttpResponse::Ok().json(announcements))
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub(super) struct ForceData {
     maturation: String,

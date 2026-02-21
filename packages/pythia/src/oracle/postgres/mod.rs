@@ -512,6 +512,86 @@ impl DBconnection {
         ))
     }
 
+    /// Retrieve the latest announcements with maturity at or before the given date,
+    /// filtered by asset pair prefix, ordered by maturity descending, limited to 100
+    pub(super) async fn get_latest_announcements(
+        &self,
+        asset_pair_prefix: &str,
+        from: DateTime<Utc>,
+        count: i64,
+    ) -> Result<Vec<PostgresResponse>> {
+        let like_pattern = format!("{}%", asset_pair_prefix);
+
+        let batch = sqlx::query_as!(
+            BatchedAnnouncementResponse,
+            "SELECT
+                e.digits,
+                e.precision,
+                e.maturity,
+                e.announcement_signature,
+                COALESCE(
+                    array_agg(
+                        d.nonce_public
+                    ORDER BY d.digit_index
+                        ),
+                    '{}') AS nonces_public
+            FROM
+                oracle.events e
+            LEFT JOIN
+                oracle.digits d
+            ON
+                e.id = d.event_id
+            WHERE
+                e.maturity <= $1 AND e.id LIKE $2
+            GROUP BY
+                e.id, e.digits, e.precision, e.maturity, e.announcement_signature
+            ORDER BY
+                e.maturity DESC
+            LIMIT $3;",
+            from,
+            like_pattern,
+            count
+        )
+        .fetch_all(&self.0)
+        .await?;
+
+        Ok(batch
+            .into_iter()
+            .map(
+                |BatchedAnnouncementResponse {
+                     digits,
+                     precision,
+                     maturity,
+                     announcement_signature,
+                     nonces_public,
+                 }| {
+                    let nonces_public =
+                        nonces_public.expect("COALESCE in psql query guarantee it is not None");
+                    PostgresResponse {
+                        digits: digits as u16,
+                        precision: precision as u16,
+                        maturity,
+                        announcement_signature: Signature::from_slice(
+                            &announcement_signature[..],
+                        )
+                        .expect(
+                            "announcement_signature must have valid length inserted by pythia",
+                        ),
+                        nonce_public: nonces_public
+                            .into_iter()
+                            .map(|ref s| {
+                                XOnlyPublicKey::from_slice(s).expect(
+                                    "nonce_public must have valid length inserted by pythia",
+                                )
+                            })
+                            .collect(),
+                        scalars_records: ScalarsRecords::DigitsSkNonce(Vec::new()),
+                    }
+                },
+            )
+            .collect())
+    }
+
     pub(super) async fn get_non_existing_sorted_maturity(
         &self,
         maturities: &[DateTime<Utc>],
